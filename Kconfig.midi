@@ -1,0 +1,7 @@
+
+
+menu "nRF MIDI"
+
+rsource "subsys/Kconfig"
+
+endmenu

@@ -1,0 +1,13 @@
+menuconfig BT_MIDI_CLIENT
+	bool "MIDI service client"
+	select BT_NRF_SERVICES
+	help
+	  Enable BLE GATT MIDI service client.
+
+if BT_MIDI_CLIENT
+
+module = BT_MIDI_CLIENT
+module-str = MIDI Client
+source "${ZEPHYR_BASE}/subsys/logging/Kconfig.template.log_config"
+
+endif # BT_MIDI_CLIENT

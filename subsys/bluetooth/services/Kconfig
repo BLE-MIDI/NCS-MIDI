@@ -1,0 +1,12 @@
+menu "Bluetooth Services"
+
+rsource "Kconfig.midi_client"
+rsource "Kconfig.midi"
+
+endmenu
+
+
+
+
+
+

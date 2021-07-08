@@ -1,0 +1,13 @@
+menuconfig BT_MIDI
+	bool "MIDI service"
+	select BT_NRF_SERVICES
+	help
+	  Enable MIDI service.
+	  
+if BT_MIDI
+
+module = BT_MIDI
+module-str = MIDI
+source "${ZEPHYR_BASE}/subsys/logging/Kconfig.template.log_config"
+
+endif # BT_MIDI
