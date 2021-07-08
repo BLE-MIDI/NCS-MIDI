@@ -1,2 +1,0 @@
-# nRF connect MIDI
-

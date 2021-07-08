@@ -33,19 +33,16 @@ Requirements
 
 The sample supports the following development kits:
 
-.. table-from-rows:: /includes/sample_board_rows.txt
-   :header: heading
-   :rows: nrf52840dk_nrf52840, nrf52dk_nrf52832, nrf52833dk_nrf52833, nrf52833dk_nrf52820
+nrf52840dk_nrf52840, nrf52dk_nrf52832, nrf52833dk_nrf52833, nrf52833dk_nrf52820
 
 The sample also requires another development kit running a compatible application (see :ref:`peripheral_midi`).
 
 Building and running
 ********************
-.. |sample path| replace:: :file:`samples/bluetooth/central_midi`
 
-.. include:: /includes/build_and_run.txt
+``west build samples/bluetooth/peripheral_midi -b [board name]``
 
-
+``west flash``
 
 
 Dependencies

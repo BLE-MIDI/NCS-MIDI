@@ -34,14 +34,10 @@ Requirements
 
 The sample supports the following development kits:
 
-.. table-from-rows:: /includes/sample_board_rows.txt
-   :header: heading
-   :rows: , nrf52840dk_nrf52840, nrf52833dk_nrf52833, nrf52dk_nrf52832, 
-
+nrf52840dk_nrf52840, nrf52dk_nrf52832, nrf52833dk_nrf52833, nrf52833dk_nrf52820
 
 
 The sample also requires a phone or tablet running a compatible application.
-The `Testing`_ instructions refer to nRF Connect for Mobile, but similar applications (for example, nRF Toolbox) can be used as well.
 
 You can also test the application with the :ref:`central_midi` sample.
 See the documentation for that sample for detailed instructions.
@@ -58,10 +54,9 @@ LED 2:
 Building and running
 ********************
 
-.. |sample path| replace:: :file:`samples/bluetooth/peripheral_midi`
+``west build samples/bluetooth/peripheral_midi -b [board name]``
 
-.. include:: /includes/build_and_run.txt
-
+``west flash``
 
 Dependencies
 ************
