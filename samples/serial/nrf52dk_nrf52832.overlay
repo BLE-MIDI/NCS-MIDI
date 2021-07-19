@@ -1,0 +1,6 @@
+&arduino_serial {
+	current-speed = <31250>;
+	tx-pin = < 0xc >;
+	rx-pin = < 0xb >;
+};
+

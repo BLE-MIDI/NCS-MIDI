@@ -37,8 +37,6 @@ LOG_MODULE_REGISTER(LOG_MODULE_NAME);
 #define INTERVAL_LLPM 0x0D01 /* Proprietary  1 ms */
 #define INTERVAL_LLPM_US 1000
 
-#define TIMESTAMP(time) (uint16_t)((time)&8191)
-
 #define DEVICE_NAME CONFIG_BT_DEVICE_NAME
 #define DEVICE_NAME_LEN (sizeof(DEVICE_NAME) - 1)
 
