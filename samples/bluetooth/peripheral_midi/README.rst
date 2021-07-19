@@ -7,7 +7,7 @@ Bluetooth: Peripheral MIDI
    :local:
    :depth: 2
 
-The Peripheral UART sample demonstrates how to use the :ref:`midi_service_readme`, as well as demonstrating how to handle the BLE-MIDI data.
+The Peripheral MIDI sample demonstrates how to use the :ref:`midi_service_readme`, as well as demonstrating how to handle the BLE-MIDI data.
 It uses the MIDI service to send data back and forth between a UART connection and a Bluetooth LE connection.
 
 

@@ -43,8 +43,6 @@ LOG_MODULE_REGISTER(LOG_MODULE_NAME);
 #define INTERVAL_LLPM 0x0D01 /* Proprietary  1 ms */
 #define INTERVAL_LLPM_US 1000
 
-#define TIMESTAMP(time) (uint16_t)((time)&8191)
-
 static uint8_t ble_midi_pck[BLE_MIDI_TX_MAX_SIZE];
 static uint8_t ble_midi_pck_len;
 static uint8_t mtu_size = BLE_MIDI_TX_MAX_SIZE + 3;

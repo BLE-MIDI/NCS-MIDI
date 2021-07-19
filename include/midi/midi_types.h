@@ -13,10 +13,11 @@
 #include <stdbool.h>
 #include <zephyr/types.h>
 
-
 #ifdef __cplusplus
 extern "C" {
 #endif
+
+#define TIMESTAMP(time) (uint16_t)((time)&8191)
 
 /** @brief Struct holding a MIDI message. */
 struct midi_msg_t {
