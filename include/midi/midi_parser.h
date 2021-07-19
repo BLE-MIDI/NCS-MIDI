@@ -56,4 +56,4 @@ void midi_parser_reset(struct midi_parser_t *parser);
 }
 #endif
 
-#endif /* AT_CMD_PARSER_H__ */
+#endif /* MIDI_PARSER_H__ */
