@@ -15,9 +15,11 @@ Samples
 
 Current samples:
 
-bluetooth\central_midi
+bluetooth\\central_midi
 
-bluetooth\peripheral_midi
+bluetooth\\peripheral_midi
+
+serial midi
 
 
 
