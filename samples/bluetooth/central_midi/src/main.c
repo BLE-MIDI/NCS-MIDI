@@ -17,6 +17,9 @@
 #include <bluetooth/services/midi.h>
 #include <bluetooth/services/midi_client.h>
 
+#include <midi/midi_parser.h>
+#include <midi/midi_types.h>
+
 #include <dk_buttons_and_leds.h>
 
 #include <mpsl_radio_notification.h>
@@ -41,19 +44,6 @@ LOG_MODULE_REGISTER(LOG_MODULE_NAME);
 #define INTERVAL_LLPM_US 1000
 
 #define TIMESTAMP(time) (uint16_t)((time)&8191)
-
-struct midi_msg_t {
-	void *fifo_reserved;
-	uint16_t timestamp;
-	uint8_t data[3];
-	uint8_t len;
-};
-
-struct midi_parser_t {
-	struct midi_msg_t *msg;
-	uint8_t running_status;
-	bool third_byte_flag;
-};
 
 static uint8_t ble_midi_pck[BLE_MIDI_TX_MAX_SIZE];
 static uint8_t ble_midi_pck_len;
@@ -114,141 +104,12 @@ void ble_midi_write(struct midi_msg_t *msg)
 	k_work_submit_to_queue(&ble_tx_work_q, &ble_midi_encode_work);
 }
 
-static bool parse_midi_byte(uint16_t timestamp, uint8_t byte,
-			    struct midi_parser_t *parser)
-{
-	struct midi_msg_t *msg;
-	uint8_t running_status;
-
-	if (!parser->msg) {
-		/** Byte is part of new message */
-		parser->msg = k_malloc(sizeof(*msg));
-		if (!parser->msg) {
-			LOG_WRN("Not able to allocate midi message buffer");
-			return false;
-		}
-		parser->msg->len = 0;
-		parser->msg->timestamp = 0;
-	}
-
-	msg = parser->msg;
-	running_status = parser->running_status;
-
-	/** Setting timestamp */
-	if (parser->msg->timestamp == 0) {
-		msg->timestamp = timestamp;
-	}
-
-	if ((byte >> 7) == 1) {
-		/** Current byte is statusbyte */
-		parser->running_status = byte;
-		parser->third_byte_flag = false;
-
-		/** Message with only one byte */
-		if ((byte >> 2) == 0b111101) {
-			if (byte == 0xF7) {
-				/** End of exclusive, not supported. Discarded for now.  */
-				return false;
-			}
-
-			msg->data[msg->len] = byte;
-			msg->len = 1;
-
-			return true;
-		}
-		return false;
-	}
-
-	if (parser->third_byte_flag == true) {
-		/** Expected third, and last, byte of message */
-		parser->third_byte_flag = false;
-		msg->data[2] = byte;
-		msg->len = 3;
-		return true;
-	}
-
-	if (running_status == 0) {
-		/** System Exclusive (SysEx) databytes, from 3rd byte until EoX, or
-		 * orphaned databytes. */
-		return false;
-	}
-
-	/** Channel Voice Messages */
-	switch (running_status >> 4) {
-	case 0x8:
-	case 0x9:
-	case 0xA:
-	case 0xB:
-	case 0xE:
-		parser->third_byte_flag = true;
-		msg->data[0] = running_status;
-		msg->data[1] = byte;
-		msg->len = 2;
-		return false;
-	case 0xC:
-	case 0xD:
-		msg->data[0] = running_status;
-		msg->data[1] = byte;
-		msg->len = 2;
-		return true;
-	}
-
-	/** System Common Message */
-	switch (running_status) {
-	case 0xF2:
-		parser->third_byte_flag = true;
-		msg->data[0] = running_status;
-		msg->data[1] = byte;
-		msg->len = 2;
-		parser->running_status = 0;
-		return false;
-	case 0xF1:
-	case 0xF3:
-		parser->third_byte_flag = true;
-		msg->data[0] = running_status;
-		msg->data[1] = byte;
-		msg->len = 2;
-		parser->running_status = 0;
-		return true;
-	case 0xF0:
-		break;
-	}
-	parser->running_status = 0;
-	return false;
-}
-
-struct midi_msg_t *parse_real_time_message(uint16_t timestamp, uint8_t byte)
-{
-	struct midi_msg_t *msg;
-
-	if (((byte >> 7) == 1) && ((byte >> 3) == 0b11111)) {
-		/** System Real-Time Messages */
-		msg = k_malloc(sizeof(*msg));
-
-		if (!msg) {
-			LOG_WRN("Not able to allocate midi message buffer");
-			return NULL;
-		}
-		msg->data[0] = byte;
-		msg->len = 1;
-		msg->timestamp = timestamp;
-
-		if (byte == 0xFF) {
-			/** MIDI Reset message, reset device to initial conditions */
-		}
-
-		return msg;
-	}
-
-	return NULL;
-}
-
 static void uart_cb(const struct device *dev, struct uart_event *evt,
 		    void *user_data)
 {
 	ARG_UNUSED(dev);
 	static uint8_t *released_buf;
-	struct midi_msg_t *midi_rx_buf;
+	struct midi_msg_t *rx_msg;
 	static struct midi_parser_t parser;
 
 	uint16_t timestamp;
@@ -278,27 +139,15 @@ static void uart_cb(const struct device *dev, struct uart_event *evt,
 
 		timestamp = TIMESTAMP(k_ticks_to_ms_near64(k_uptime_ticks()));
 
-		/** Check if the Received byte is a System Real-Time message. */
-		midi_rx_buf =
-			parse_real_time_message(timestamp, *evt->data.rx.buf);
-		if (!midi_rx_buf) {
-			/** Received byte is System Common- or Channel Voice message. */
-			if (parse_midi_byte(timestamp, *evt->data.rx.buf,
-					    &parser)) {
-				midi_rx_buf = parser.msg;
-				parser.msg = NULL;
-			}
-		} else if (parser.msg && (parser.msg->timestamp < timestamp)) {
-			/** RTM has interrupted a message */
-			parser.msg->timestamp = timestamp;
-		}
+		rx_msg = midi_parse_byte(timestamp, *evt->data.rx.buf, &parser);
 
-		if (midi_rx_buf) {
-			/** Message complete, add to FIFO */
+		if (rx_msg) {
+			/** Message complete */
+			LOG_HEXDUMP_INF(rx_msg->data, rx_msg->len, "rx:");
 			if (!ble_midi_ready) {
-				uart_midi_write(midi_rx_buf);
+				uart_midi_write(rx_msg);
 			} else {
-				ble_midi_write(midi_rx_buf);
+				ble_midi_write(rx_msg);
 			}
 		}
 		break;
@@ -659,27 +508,6 @@ static void connected(struct bt_conn *conn, uint8_t conn_err)
 		LOG_ERR("Stop LE scan failed (err %d)", err);
 	}
 
-	uint16_t conn_handle;
-
-	err = bt_hci_get_conn_handle(current_conn, &conn_handle);
-	if (err) {
-		LOG_INF("Failed obtaining conn_handle (err %d)\n", err);
-		return;
-	}
-
-	sdc_hci_cmd_vs_zephyr_write_tx_power_t tx_power_param = {
-		.handle_type = SDC_HCI_VS_TX_POWER_HANDLE_TYPE_CONN,
-		.handle = conn_handle,
-		.tx_power_level = 8
-	};
-
-	sdc_hci_cmd_vs_zephyr_write_tx_power_return_t tx_power_ret;
-
-	err = sdc_hci_cmd_vs_zephyr_write_tx_power(&tx_power_param,
-						   &tx_power_ret);
-
-	LOG_INF("tx_power set to %d", tx_power_ret.selected_tx_power);
-
 	if (conn == current_conn) {
 		err = bt_gatt_dm_start(conn, BT_UUID_MIDI_SERVICE,
 				       &discovery_cb, &midi_client);
@@ -739,17 +567,13 @@ static void le_param_updated(struct bt_conn *conn, uint16_t interval,
 	}
 }
 
-void le_phy_updated(struct bt_conn *conn, struct bt_conn_le_phy_info *param)
-{
-	LOG_INF("PHY updated: tx_phy: %d, rx_phy: %d", param->tx_phy,
-		param->rx_phy);
-}
-static struct bt_conn_cb conn_callbacks = { .connected = connected,
-					    .disconnected = disconnected,
-					    .le_param_req = le_param_req,
-					    .le_param_updated =
-						    le_param_updated,
-					    .le_phy_updated = le_phy_updated };
+
+static struct bt_conn_cb conn_callbacks = { 
+	.connected = connected,
+	.disconnected = disconnected,
+	.le_param_req = le_param_req,
+	.le_param_updated = le_param_updated
+};
 
 static void scan_filter_match(struct bt_scan_device_info *device_info,
 			      struct bt_scan_filter_match *filter_match,
@@ -853,15 +677,7 @@ uint8_t bt_receive_cb(struct bt_conn *conn, const uint8_t *const data,
 		} else {
 			/** Statusbytes and databytes */
 			next_is_new_timestamp = true;
-			msg = parse_real_time_message(timestamp, current_byte);
-
-			if (!msg) {
-				if (parse_midi_byte(timestamp, current_byte,
-						    &parser)) {
-					msg = parser.msg;
-					parser.msg = NULL;
-				}
-			}
+			msg = midi_parse_byte(timestamp, current_byte, &parser);
 
 			if (msg) {
 				/** Message completed */
