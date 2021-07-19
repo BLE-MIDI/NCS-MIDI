@@ -3,5 +3,6 @@
 menu "nRF MIDI"
 
 rsource "subsys/Kconfig"
+rsource "lib/Kconfig"
 
 endmenu

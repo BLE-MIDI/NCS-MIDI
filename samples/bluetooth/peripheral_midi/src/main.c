@@ -13,6 +13,9 @@
 
 #include <bluetooth/services/midi.h>
 
+#include <midi/midi_parser.h>
+#include <midi/midi_types.h>
+
 #include <dk_buttons_and_leds.h>
 
 #include <mpsl_radio_notification.h>
@@ -66,19 +69,6 @@ static uint8_t uart_rx_buf[2];
 
 static bool radio_notif_flag;
 
-struct midi_msg_t {
-	void *fifo_reserved;
-	uint16_t timestamp;
-	uint8_t data[3];
-	uint8_t len;
-};
-
-struct midi_parser_t {
-	struct midi_msg_t *msg;
-	uint8_t running_status;
-	bool third_byte_flag;
-};
-
 static const struct bt_data ad[] = {
 	BT_DATA_BYTES(BT_DATA_FLAGS, (BT_LE_AD_GENERAL | BT_LE_AD_NO_BREDR)),
 	BT_DATA(BT_DATA_NAME_COMPLETE, DEVICE_NAME, DEVICE_NAME_LEN),
@@ -106,142 +96,12 @@ void ble_midi_write(struct midi_msg_t *msg)
 	k_work_submit_to_queue(&ble_tx_work_q, &ble_midi_encode_work);
 }
 
-static bool parse_midi_byte(uint16_t timestamp, uint8_t byte,
-			    struct midi_parser_t *parser)
-{
-	struct midi_msg_t *msg;
-	uint8_t running_status;
-
-	if (!parser->msg) {
-		/** Byte is part of new message */
-		parser->msg = k_malloc(sizeof(*msg));
-		if (!parser->msg) {
-			LOG_WRN("Not able to allocate midi message buffer");
-			return false;
-		}
-		parser->msg->len = 0;
-		parser->msg->timestamp = 0;
-	}
-
-	msg = parser->msg;
-	running_status = parser->running_status;
-
-	/** Setting timestamp */
-	if (parser->msg->timestamp == 0) {
-		msg->timestamp = timestamp;
-	}
-
-	if ((byte >> 7) == 1) {
-		/** Current byte is statusbyte */
-		parser->running_status = byte;
-		parser->third_byte_flag = false;
-
-		/** Message with only one byte */
-		if ((byte >> 2) == 0b111101) {
-			if (byte == 0xF7) {
-				/** End of exclusive, not supported. Discarded for now.  */
-				return false;
-			}
-
-			msg->data[msg->len] = byte;
-			msg->len = 1;
-
-			return true;
-		}
-		return false;
-	}
-
-	if (parser->third_byte_flag == true) {
-		/** Expected third, and last, byte of message */
-		parser->third_byte_flag = false;
-		msg->data[2] = byte;
-		msg->len = 3;
-		return true;
-	}
-
-	if (running_status == 0) {
-		/** System Exclusive (SysEx) databytes, from 3rd byte until EoX, or
-		 * orphaned databytes. */
-		return false;
-	}
-
-	/** Channel Voice Messages */
-	switch (running_status >> 4) {
-	case 0x8:
-	case 0x9:
-	case 0xA:
-	case 0xB:
-	case 0xE:
-		parser->third_byte_flag = true;
-		msg->data[0] = running_status;
-		msg->data[1] = byte;
-		msg->len = 2;
-		return false;
-	case 0xC:
-	case 0xD:
-		msg->data[0] = running_status;
-		msg->data[1] = byte;
-		msg->len = 2;
-		return true;
-	}
-
-	/** System Common Message */
-	switch (running_status) {
-	case 0xF2:
-		parser->third_byte_flag = true;
-		msg->data[0] = running_status;
-		msg->data[1] = byte;
-		msg->len = 2;
-		parser->running_status = 0;
-		return false;
-	case 0xF1:
-	case 0xF3:
-		parser->third_byte_flag = false;
-		msg->data[0] = running_status;
-		msg->data[1] = byte;
-		msg->len = 2;
-		parser->running_status = 0;
-		return true;
-	case 0xF0:
-		break;
-	}
-
-	parser->running_status = 0;
-	return false;
-}
-
-struct midi_msg_t *parse_real_time_message(uint16_t timestamp, uint8_t byte)
-{
-	struct midi_msg_t *msg;
-
-	if (((byte >> 7) == 1) && ((byte >> 3) == 0b11111)) {
-		/** System Real-Time Messages */
-		msg = k_malloc(sizeof(*msg));
-
-		if (!msg) {
-			LOG_WRN("Not able to allocate midi message buffer");
-			return NULL;
-		}
-
-		msg->data[0] = byte;
-		msg->len = 1;
-		msg->timestamp = timestamp;
-
-		if (byte == 0xFF) {
-			/** MIDI Reset message, reset device to initial conditions */
-		}
-		return msg;
-	}
-
-	return NULL;
-}
-
 static void uart_cb(const struct device *dev, struct uart_event *evt,
 		    void *user_data)
 {
 	ARG_UNUSED(dev);
 	static uint8_t *released_buf;
-	struct midi_msg_t *midi_rx_buf;
+	struct midi_msg_t *rx_msg;
 	static struct midi_parser_t parser;
 
 	uint16_t timestamp;
@@ -270,28 +130,14 @@ static void uart_cb(const struct device *dev, struct uart_event *evt,
 
 		timestamp = TIMESTAMP(k_ticks_to_ms_near64(k_uptime_ticks()));
 
-		/** Check if the Received byte is a System Real-Time message. */
-		midi_rx_buf =
-			parse_real_time_message(timestamp, *evt->data.rx.buf);
-		if (!midi_rx_buf) {
-			/** Received byte is System Common- or Channel Voice message. */
-			if (parse_midi_byte(timestamp, *evt->data.rx.buf,
-					    &parser)) {
-				midi_rx_buf = parser.msg;
-				parser.msg = NULL;
-			}
-		} else if (parser.msg && (parser.msg->timestamp < timestamp)) {
-			/** RTM has interrupted a message */
-			LOG_INF("Interrupting Cow!");
-			parser.msg->timestamp = timestamp;
-		}
+		rx_msg = midi_parse_byte(timestamp, *evt->data.rx.buf, &parser);
 
-		if (midi_rx_buf) {
+		if (rx_msg) {
 			/** Message complete, add to FIFO */
 			if (!current_conn) {
-				uart_midi_write(midi_rx_buf);
+				uart_midi_write(rx_msg);
 			} else {
-				ble_midi_write(midi_rx_buf);
+				ble_midi_write(rx_msg);
 			}
 		}
 		break;
@@ -627,7 +473,7 @@ static uint16_t convert_timestamp(uint16_t timestamp, uint16_t conn_interval,
 static void bt_receive_cb(struct bt_conn *conn, const uint8_t *const data,
 			  uint16_t len)
 {
-	struct midi_msg_t *msg;
+	struct midi_msg_t *rx_msg;
 	static struct midi_parser_t parser;
 	static uint32_t conn_time;
 
@@ -681,26 +527,20 @@ static void bt_receive_cb(struct bt_conn *conn, const uint8_t *const data,
 			timestamp = convert_timestamp(timestamp_ble, interval,
 						      conn_time);
 
-			if (!msg) {
+			if (!rx_msg) {
 				/** Previous message was not complete */
 				LOG_ERR("Incomplete message: pos %d.", pos);
 			}
 		} else {
 			/** Statusbytes and databytes */
 			next_is_new_timestamp = true;
-			msg = parse_real_time_message(timestamp, current_byte);
 
-			if (!msg) {
-				if (parse_midi_byte(timestamp, current_byte,
-						    &parser)) {
-					msg = parser.msg;
-					parser.msg = NULL;
-				}
-			}
+			rx_msg = midi_parse_byte(timestamp, current_byte, &parser);
 
-			if (msg) {
+			if (rx_msg) {
 				/** Message completed */
-				uart_midi_write(msg);
+				LOG_HEXDUMP_INF(rx_msg->data, rx_msg->len, "rx:");
+				uart_midi_write(rx_msg);
 			}
 		}
 	}
