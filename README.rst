@@ -38,3 +38,7 @@ followed by:
 
 ``west update``
 
+
+Learn more
+**********
+We've written an article about `Optimizing BLE-MIDI with regards to timing.  <https://devzone.nordicsemi.com/nordic/nordic-blog/b/blog/posts/optimizing-ble-midi-with-regards-to-timing-1293631358>`_ The article is uses this sample, and has some neat resources for those that wan't to learn more.
